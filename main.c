@@ -256,8 +256,14 @@ struct mps_register_map mps_reg_map = {
 		page2,
 };
 
-int32_t i2c_smbus_access(int file, char read_write, uint8_t command,
-		       int size, union i2c_smbus_data *data)
+struct mps {
+	struct mps_register_map	mps_reg_map;
+	uint16_t				vid;		/* P0:0x99[15:0] 50 */
+	uint16_t				pid;		/* P0:0x9A[15:0] 51 */
+	uint16_t				i2c_addr;	/* P2:0x1A[15:8] 25 */
+};
+
+int32_t i2c_smbus_access(int file, char read_write, uint8_t command, int size, union i2c_smbus_data *data)
 {
 	struct i2c_smbus_ioctl_data args;
 	int32_t err;
@@ -273,13 +279,29 @@ int32_t i2c_smbus_access(int file, char read_write, uint8_t command,
 	return err;
 }
 
+int32_t i2c_smbus_read_byte(int file)
+{
+	union i2c_smbus_data data;
+	int err;
+
+	err = i2c_smbus_access(file, I2C_SMBUS_READ, 0, I2C_SMBUS_BYTE, &data);
+	if (err < 0)
+		return err;
+
+	return 0x0FF & data.byte;
+}
+
+int32_t i2c_smbus_write_byte(int file, uint8_t value)
+{
+	return i2c_smbus_access(file, I2C_SMBUS_WRITE, value, I2C_SMBUS_BYTE, NULL);
+}
+
 int32_t i2c_smbus_read_byte_data(int file, uint8_t command)
 {
 	union i2c_smbus_data data;
 	int err;
 
-	err = i2c_smbus_access(file, I2C_SMBUS_READ, command,
-			       I2C_SMBUS_BYTE_DATA, &data);
+	err = i2c_smbus_access(file, I2C_SMBUS_READ, command, I2C_SMBUS_BYTE_DATA, &data);
 	if (err < 0)
 		return err;
 
@@ -314,28 +336,22 @@ int32_t i2c_smbus_write_word_data(int file, uint8_t command, uint8_t value)
 				I2C_SMBUS_WORD_DATA, &data);
 }
 
-int32_t i2c_smbus_read_byte(int file)
+void mps_memory_write(int device_fd)
 {
-	union i2c_smbus_data data;
-	int err;
-
-	err = i2c_smbus_access(file, I2C_SMBUS_READ, 0, I2C_SMBUS_BYTE, &data);
-	if (err < 0)
-		return err;
-
-	return 0x0FF & data.byte;
+	i2c_smbus_write_byte(device_fd, 0xF1);
 }
 
-int32_t i2c_smbus_write_byte(int file, uint8_t value)
+void mps_page_select(int device_fd, uint32_t page_num)
 {
-	return i2c_smbus_access(file, I2C_SMBUS_WRITE, value,
-				I2C_SMBUS_BYTE, NULL);
+	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
 }
 
 void mps_register_map_read(int device_fd, const struct mps_register_map *mps_reg_map)
 {
 	size_t reg_num;
 	int32_t ret_val = 0;
+
+	mps_page_select(device_fd, 0x00);
 
 	for (reg_num = 0; ; ++reg_num) {
 		if ((mps_reg_map->page0[reg_num].addr == 0xFF) &&
@@ -358,7 +374,7 @@ void mps_register_map_read(int device_fd, const struct mps_register_map *mps_reg
 		mps_reg_map->page0[reg_num].data = (uint16_t)ret_val;
 	}
 
-	i2c_smbus_write_byte_data(device_fd, 0x00, 0x01);
+	mps_page_select(device_fd, 0x01);
 
 	for (reg_num = 0; ; ++reg_num) {
 		if ((mps_reg_map->page1[reg_num].addr == 0xFF) &&
@@ -381,7 +397,7 @@ void mps_register_map_read(int device_fd, const struct mps_register_map *mps_reg
 		mps_reg_map->page1[reg_num].data = (uint16_t)ret_val;
 	}
 
-	i2c_smbus_write_byte_data(device_fd, 0x00, 0x02);
+	mps_page_select(device_fd, 0x02);
 
 	for (reg_num = 0; ; ++reg_num) {
 		if ((mps_reg_map->page2[reg_num].addr == 0xFF) &&
@@ -403,6 +419,81 @@ void mps_register_map_read(int device_fd, const struct mps_register_map *mps_reg
 
 		mps_reg_map->page2[reg_num].data = (uint16_t)ret_val;
 	}
+}
+
+void mps_register_map_load(const char *src_file, const struct mps_register_map *mps_reg_map)
+{
+
+}
+
+void mps_register_map_write(int device_fd, const struct mps_register_map *mps_reg_map)
+{
+	size_t reg_num;
+
+	mps_page_select(device_fd, 0x00);
+
+	for (reg_num = 0; ; ++reg_num) {
+		if ((mps_reg_map->page0[reg_num].addr == 0xFF) &&
+			(mps_reg_map->page0[reg_num].length == 0xFF) &&
+			(mps_reg_map->page0[reg_num].data == 0xFFFF)) {
+			break;
+		}
+		if (mps_reg_map->page0[reg_num].length == 1) {
+
+			i2c_smbus_write_byte_data(device_fd, mps_reg_map->page0[reg_num].addr,
+										mps_reg_map->page0[reg_num].data);
+
+		} else if (mps_reg_map->page0[reg_num].length == 2) {
+			i2c_smbus_write_word_data(device_fd, mps_reg_map->page0[reg_num].addr,
+										mps_reg_map->page0[reg_num].data);
+		} else {
+			continue;
+		}
+	}
+
+	mps_page_select(device_fd, 0x01);
+
+	for (reg_num = 0; ; ++reg_num) {
+		if ((mps_reg_map->page1[reg_num].addr == 0xFF) &&
+			(mps_reg_map->page1[reg_num].length == 0xFF) &&
+			(mps_reg_map->page1[reg_num].data == 0xFFFF)) {
+			break;
+		}
+		if (mps_reg_map->page1[reg_num].length == 1) {
+
+			i2c_smbus_write_byte_data(device_fd, mps_reg_map->page1[reg_num].addr,
+										mps_reg_map->page0[reg_num].data);
+
+		} else if (mps_reg_map->page1[reg_num].length == 2) {
+			i2c_smbus_write_word_data(device_fd, mps_reg_map->page1[reg_num].addr,
+										mps_reg_map->page1[reg_num].data);
+		} else {
+			continue;
+		}
+	}
+
+	mps_page_select(device_fd, 0x02);
+
+	for (reg_num = 0; ; ++reg_num) {
+		if ((mps_reg_map->page2[reg_num].addr == 0xFF) &&
+			(mps_reg_map->page2[reg_num].length == 0xFF) &&
+			(mps_reg_map->page2[reg_num].data == 0xFFFF)) {
+			break;
+		}
+		if (mps_reg_map->page2[reg_num].length == 1) {
+
+			i2c_smbus_write_byte_data(device_fd, mps_reg_map->page2[reg_num].addr,
+										mps_reg_map->page2[reg_num].data);
+
+		} else if (mps_reg_map->page2[reg_num].length == 2) {
+			i2c_smbus_write_word_data(device_fd, mps_reg_map->page2[reg_num].addr,
+										mps_reg_map->page2[reg_num].data);
+		} else {
+			continue;
+		}
+	}
+
+	i2c_smbus_write_byte(device_fd, 0xF1);
 }
 
 void mps_register_map_print(const struct mps_register_map *mps_reg_map)
@@ -452,6 +543,30 @@ void mps_register_map_print(const struct mps_register_map *mps_reg_map)
 	}
 }
 
+void mps_register_word_write(int device_fd, uint32_t page_num, uint32_t reg_addr, uint16_t reg_value)
+{
+	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
+	i2c_smbus_write_word_data(device_fd, reg_addr, reg_value);
+	i2c_smbus_write_byte(device_fd, 0xF1);
+}
+
+void mps_register_byte_write(int device_fd, uint32_t page_num, uint32_t reg_addr, uint8_t reg_value)
+{
+	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
+	i2c_smbus_write_byte_data(device_fd, reg_addr, reg_value);
+	i2c_smbus_write_byte(device_fd, 0xF1);
+}
+
+void mps_writing_test(int device_fd)
+{
+	printf("Writing P0:E5 register\n");
+	printf("Writing P1:E5 register\n");
+	printf("Writing P2:1E register\n");
+	mps_register_word_write(device_fd, 0, 0xE5, 0x0028);
+	mps_register_word_write(device_fd, 1, 0xE5, 0x0029);
+	mps_register_word_write(device_fd, 2, 0x1E, 0x0006);
+}
+
 int32_t main(int32_t argc, const char *argv[])
 {
 	printf("linux-smbus-trans\n");
@@ -476,6 +591,7 @@ int32_t main(int32_t argc, const char *argv[])
 		return -3;
 	}
 
+#if 0
 	uint32_t dev_reg_num = 0x00; /* Device register to access */
 	int32_t ret_val;
 
@@ -490,7 +606,12 @@ int32_t main(int32_t argc, const char *argv[])
 		if (((dev_reg_num + 1) % 16) == 0 && dev_reg_num != 0)
 			printf("\n");
 	}
+#endif
 
+
+	mps_register_map_read(i2c_bus_fd, &mps_reg_map);
+	mps_register_map_print(&mps_reg_map);
+	mps_writing_test(i2c_bus_fd);
 	mps_register_map_read(i2c_bus_fd, &mps_reg_map);
 	mps_register_map_print(&mps_reg_map);
 	return 0;
