@@ -9,6 +9,7 @@
 #include <linux/i2c.h>
 #include <errno.h>
 #include <unistd.h>
+#include <string.h>
 
 struct mps_register {
 	uint8_t		addr;
@@ -421,9 +422,156 @@ void mps_register_map_read(int device_fd, const struct mps_register_map *mps_reg
 	}
 }
 
-void mps_register_map_load(const char *src_file, const struct mps_register_map *mps_reg_map)
+int32_t mps_register_map_load(const char *src_file, struct mps *mps)
 {
+	int src_file_fd = open(src_file, O_RDONLY);
+	if (src_file_fd < 0) {
+		perror("Function open() returned with error");
+		return -1;
+	}
 
+	int ret_val = 0;
+//	int ret_val = read(src_file_fd, mps, sizeof(struct mps));
+//	if (ret_val < 0) {
+//			perror("Function read() 1 returned with error");
+//			close(src_file_fd);
+//			return -1;
+//	}
+
+	size_t reg_num;
+
+	for (reg_num = 0; ; ++reg_num) {
+
+		ret_val = read(src_file_fd, &mps->mps_reg_map.page0[reg_num], sizeof(struct mps_register));
+
+		if (ret_val < 0) {
+			perror("Function read() returned with error");
+			close(src_file_fd);
+			return -1;
+		}
+
+		if ((mps->mps_reg_map.page0[reg_num].addr == 0xFF) &&
+			(mps->mps_reg_map.page0[reg_num].length == 0xFF) &&
+			(mps->mps_reg_map.page0[reg_num].data == 0xFFFF)) {
+
+			break;
+		}
+	}
+
+	for (reg_num = 0; ; ++reg_num) {
+
+		ret_val = read(src_file_fd, &mps->mps_reg_map.page1[reg_num], sizeof(struct mps_register));
+
+		if (ret_val < 0) {
+			perror("Function read() returned with error");
+			close(src_file_fd);
+			return -1;
+		}
+
+		if ((mps->mps_reg_map.page1[reg_num].addr == 0xFF) &&
+			(mps->mps_reg_map.page1[reg_num].length == 0xFF) &&
+			(mps->mps_reg_map.page1[reg_num].data == 0xFFFF)) {
+
+			break;
+		}
+	}
+
+	for (reg_num = 0; ; ++reg_num) {
+
+		ret_val = read(src_file_fd, &mps->mps_reg_map.page2[reg_num], sizeof(struct mps_register));
+
+		if (ret_val < 0) {
+			perror("Function read() returned with error");
+			close(src_file_fd);
+			return -1;
+		}
+
+		if ((mps->mps_reg_map.page2[reg_num].addr == 0xFF) &&
+			(mps->mps_reg_map.page2[reg_num].length == 0xFF) &&
+			(mps->mps_reg_map.page2[reg_num].data == 0xFFFF)) {
+
+			break;
+		}
+	}
+
+	close(src_file_fd);
+	return 0;
+}
+
+int32_t mps_register_map_store(const char *dst_file, const struct mps *mps)
+{
+	int dst_file_fd = open(dst_file, O_CREAT|O_WRONLY|O_TRUNC);
+	if (dst_file_fd < 0) {
+		perror("Function open() returned with error");
+		return -1;
+	}
+
+	int ret_val = 0;
+//	int ret_val = write(dst_file_fd, mps, sizeof(struct mps));
+//	if (ret_val < 0) {
+//			perror("Function write() returned with error");
+//			close(dst_file_fd);
+//			return -1;
+//	}
+
+	size_t reg_num;
+
+	for (reg_num = 0; ; ++reg_num) {
+
+		ret_val = write(dst_file_fd, &mps->mps_reg_map.page0[reg_num], sizeof(struct mps_register));
+
+		if (ret_val < 0) {
+			perror("Function write() returned with error");
+			close(dst_file_fd);
+			return -1;
+		}
+
+		if ((mps->mps_reg_map.page0[reg_num].addr == 0xFF) &&
+			(mps->mps_reg_map.page0[reg_num].length == 0xFF) &&
+			(mps->mps_reg_map.page0[reg_num].data == 0xFFFF)) {
+
+			break;
+		}
+	}
+
+	for (reg_num = 0; ; ++reg_num) {
+
+		ret_val = write(dst_file_fd, &mps->mps_reg_map.page1[reg_num], sizeof(struct mps_register));
+
+		if (ret_val < 0) {
+			perror("Function write() returned with error");
+			close(dst_file_fd);
+			return -1;
+		}
+
+		if ((mps->mps_reg_map.page1[reg_num].addr == 0xFF) &&
+			(mps->mps_reg_map.page1[reg_num].length == 0xFF) &&
+			(mps->mps_reg_map.page1[reg_num].data == 0xFFFF)) {
+
+			break;
+		}
+	}
+
+	for (reg_num = 0; ; ++reg_num) {
+
+		ret_val = write(dst_file_fd, &mps->mps_reg_map.page2[reg_num], sizeof(struct mps_register));
+
+		if (ret_val < 0) {
+			perror("Function write() returned with error");
+			close(dst_file_fd);
+			return -1;
+		}
+
+		if ((mps->mps_reg_map.page2[reg_num].addr == 0xFF) &&
+			(mps->mps_reg_map.page2[reg_num].length == 0xFF) &&
+			(mps->mps_reg_map.page2[reg_num].data == 0xFFFF)) {
+
+			break;
+		}
+	}
+
+	close(dst_file_fd);
+	return 0;
 }
 
 void mps_register_map_write(int device_fd, const struct mps_register_map *mps_reg_map)
@@ -569,9 +717,7 @@ void mps_writing_test(int device_fd)
 
 int32_t main(int32_t argc, const char *argv[])
 {
-	printf("linux-smbus-trans\n");
-
-	if (argc != 3) {
+	if (argc < 4) {
 		printf("Invalid arguments count\n");
 		return -1;
 	}
@@ -581,8 +727,6 @@ int32_t main(int32_t argc, const char *argv[])
 		perror("Function open() returned with error");
 		return -2;
 	}
-	printf("File %s opened\n", argv[1]);
-
 	int32_t dev_bus_addr = 0;
 	sscanf(argv[2], "0x%02X", &dev_bus_addr);
 	if (ioctl(i2c_bus_fd, I2C_SLAVE, dev_bus_addr) < 0) {
@@ -591,28 +735,57 @@ int32_t main(int32_t argc, const char *argv[])
 		return -3;
 	}
 
-#if 0
-	uint32_t dev_reg_num = 0x00; /* Device register to access */
-	int32_t ret_val;
+	struct mps mps;
+	mps.mps_reg_map = mps_reg_map;
 
-	for (; dev_reg_num <= 0xFF; ++dev_reg_num) {
-		/* Using SMBus commands */
-		ret_val = i2c_smbus_read_byte_data(i2c_bus_fd, dev_reg_num);
-		if (ret_val < 0) {
-			printf("XX ");
-		} else {
-			printf("%02X ", ret_val);
+	/* Read MPS registers and save in file. */
+	if (strcmp(argv[3], "s") == 0) {
+		if (argc < 5) {
+			printf("Invalid arguments count\n");
+			printf("It needs to declare file name to store registers\n");
+			close(i2c_bus_fd);
+			return -4;
 		}
-		if (((dev_reg_num + 1) % 16) == 0 && dev_reg_num != 0)
-			printf("\n");
+
+		mps_register_map_read(i2c_bus_fd, &mps.mps_reg_map);
+		mps_register_map_store(argv[4], &mps);
+
+	/* Load MPS registers from file and write in chip. */
+	} else if (strcmp(argv[3], "l") == 0) {
+		if (argc < 5) {
+			printf("Invalid arguments count\n");
+			printf("It needs to declare file name to load registers from\n");
+			close(i2c_bus_fd);
+			return -5;
+		}
+
+		mps_register_map_load(argv[4], &mps);
+
+		if (dev_bus_addr != (mps.mps_reg_map.page2[25].data >> 8)) {
+			printf("File contains registers for device with different address\n");
+			close(i2c_bus_fd);
+			return -6;
+		}
+
+		mps_register_map_write(i2c_bus_fd, &mps.mps_reg_map);
+
+	/* Read MPS registers and print. */
+	} else if (strcmp(argv[3], "p") == 0) {
+		mps_register_map_read(i2c_bus_fd, &mps.mps_reg_map);
+		mps_register_map_print(&mps.mps_reg_map);
+	} else {
+		printf("Invalid argument %s\n", argv[3]);
+		close(i2c_bus_fd);
+		return -7;
 	}
+
+//	mps_register_map_print(&mps_reg_map);
+#if 0
+	mps.i2c_addr = mps_reg_map.page2[25].data >> 8;
+	mps.vid = mps_reg_map.page0[50].data;
+	mps.pid = mps_reg_map.page0[51].data;
 #endif
 
-
-	mps_register_map_read(i2c_bus_fd, &mps_reg_map);
-	mps_register_map_print(&mps_reg_map);
-	mps_writing_test(i2c_bus_fd);
-	mps_register_map_read(i2c_bus_fd, &mps_reg_map);
-	mps_register_map_print(&mps_reg_map);
+	close(i2c_bus_fd);
 	return 0;
 }
