@@ -329,7 +329,7 @@ int32_t i2c_smbus_read_word_data(int file, uint8_t command)
 	return 0x0FFFF & data.word;
 }
 
-int32_t i2c_smbus_write_word_data(int file, uint8_t command, uint8_t value)
+int32_t i2c_smbus_write_word_data(int file, uint8_t command, uint16_t value)
 {
 	union i2c_smbus_data data;
 	data.word = value;
@@ -586,6 +586,10 @@ void mps_register_map_write(int device_fd, const struct mps_register_map *mps_re
 			(mps_reg_map->page0[reg_num].data == 0xFFFF)) {
 			break;
 		}
+
+		if (mps_reg_map->page0[reg_num].addr == 0x9D) /* CONFIG_ID */
+			continue;
+
 		if (mps_reg_map->page0[reg_num].length == 1) {
 
 			i2c_smbus_write_byte_data(device_fd, mps_reg_map->page0[reg_num].addr,
