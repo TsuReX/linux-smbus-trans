@@ -702,6 +702,12 @@ void mps_register_word_write(int device_fd, uint32_t page_num, uint32_t reg_addr
 	i2c_smbus_write_byte(device_fd, 0xF1);
 }
 
+int32_t mps_register_word_read(int device_fd, uint32_t page_num, uint32_t reg_addr)
+{
+	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
+	return i2c_smbus_read_word_data(device_fd, reg_addr);
+}
+
 void mps_register_byte_write(int device_fd, uint32_t page_num, uint32_t reg_addr, uint8_t reg_value)
 {
 	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
@@ -719,9 +725,16 @@ void mps_writing_test(int device_fd)
 	mps_register_word_write(device_fd, 2, 0x1E, 0x0006);
 }
 
+int32_t mps_detect(int device_fd)
+{
+	if ((mps_register_word_read(device_fd, 0x00, 0x9D) & 0xFF00) == 0x6700)
+		return 0;
+	return -1;
+}
+
 int32_t main(int32_t argc, const char *argv[])
 {
-	if (argc < 4) {
+	if (argc < 3) {
 		printf("Invalid arguments count\n");
 		return -1;
 	}
@@ -731,7 +744,32 @@ int32_t main(int32_t argc, const char *argv[])
 		perror("Function open() returned with error");
 		return -2;
 	}
+
 	int32_t dev_bus_addr = 0;
+	if (argc == 3) {
+		if (strcmp(argv[2], "d") != 0) {
+			printf("Invalid argument\n");
+			printf("It needs to declare d argument\n");
+		}
+
+		for (; dev_bus_addr <= 0x7F; dev_bus_addr++) {
+
+			if (ioctl(i2c_bus_fd, I2C_SLAVE, dev_bus_addr) < 0) {
+				perror("Function ioctl() returned with error");
+				close(i2c_bus_fd);
+				return -3;
+			}
+
+			if (mps_detect(i2c_bus_fd) == 0) {
+				printf("Detected 0x%02X\n", dev_bus_addr);
+			} else {
+				printf("Not detected 0x%02X\n", dev_bus_addr);
+			}
+
+		}
+		return 0;
+	}
+
 	sscanf(argv[2], "0x%02X", &dev_bus_addr);
 	if (ioctl(i2c_bus_fd, I2C_SLAVE, dev_bus_addr) < 0) {
 		perror("Function ioctl() returned with error");
