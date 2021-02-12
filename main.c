@@ -727,9 +727,11 @@ void mps_writing_test(int device_fd)
 
 int32_t mps_detect(int device_fd)
 {
-	if ((mps_register_word_read(device_fd, 0x00, 0x9D) & 0xFF00) == 0x6700)
-		return 0;
-	return -1;
+	int32_t ret_val = mps_register_word_read(device_fd, 0x00, 0x9D);
+	if (ret_val < 0)
+		return -1;
+	printf("Data 0x%02X\n", ret_val);
+	return 0;
 }
 
 int32_t main(int32_t argc, const char *argv[])
@@ -763,10 +765,11 @@ int32_t main(int32_t argc, const char *argv[])
 			if (mps_detect(i2c_bus_fd) == 0) {
 				printf("Detected 0x%02X\n", dev_bus_addr);
 			} else {
-				printf("Not detected 0x%02X\n", dev_bus_addr);
+//				printf("Not detected 0x%02X\n", dev_bus_addr);
 			}
 
 		}
+		close(i2c_bus_fd);
 		return 0;
 	}
 
