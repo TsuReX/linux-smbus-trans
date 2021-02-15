@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
+#include <getopt.h>
 
 struct mps_register {
 	uint8_t		addr;
@@ -736,6 +737,212 @@ int32_t mps_detect(int device_fd)
 
 int32_t main(int32_t argc, const char *argv[])
 {
+
+	enum action {
+		detect = 0,
+		load,
+		store,
+		print,
+		readdr,
+		no_action
+	};
+	enum action action = no_action;
+
+	const char *opt_string = "dslpf:h?";
+
+	const struct option long_opt[] = {
+		{ "device", required_argument, NULL, 0 },
+	    { "file", required_argument, NULL, 'f' },
+		{ "addr", required_argument, NULL, 0 },
+		{ "newaddr", required_argument, NULL, 0 },
+		{ "readdr", no_argument, NULL, 0 },
+	    { NULL, no_argument, NULL, 0 }
+	};
+
+	char conf_file[2048];
+	char dev_file[2048];
+	int32_t long_opt_ind = 0;
+	uint32_t smbus_addr = 0;
+	uint32_t smbus_new_addr = 0;
+
+	memset(conf_file, 0, sizeof(conf_file));
+	memset(dev_file, 0, sizeof(dev_file));
+	int32_t opt_res = getopt_long(argc, (char * const*)argv, opt_string, long_opt, &long_opt_ind);
+	while( opt_res != -1 ) {
+		switch( opt_res ) {
+			case 'd':
+				printf("Detect devices on the bus\n");
+				action = detect;
+				break;
+
+			case 'l':
+				printf("Load device's configuration from the file\n");
+				action = load;
+				break;
+
+			case 's':
+				printf("Store device's configuration to the file\n");
+				action = store;
+				break;
+
+			case 'p':
+				printf("Print configuration\n");
+				action = print;
+				break;
+
+			case 'f':
+				printf("Configuration file: %s\n", optarg);
+				strcpy(conf_file, optarg);
+				break;
+
+			case 'h':
+			case '?':
+				printf("Help\n");
+				break;
+
+			 case 0:
+				 switch(long_opt_ind) {
+
+				 case 0: /* device file */
+					 printf("File of device: %s\n", optarg);
+					 strcpy(dev_file, optarg);
+					 break;
+
+				 case 1: /* configuration file */
+					 printf("Configuration file: %s\n", optarg);
+					 strcpy(conf_file, optarg);
+					 break;
+
+				 case 2: /* bus address */
+					 sscanf(optarg, "0x%02X", &smbus_addr);
+					 printf("Bus address: 0x%02X\n", smbus_addr);
+					 break;
+
+				 case 3: /* bus address */
+					 sscanf(optarg, "0x%02X", &smbus_new_addr);
+					 printf("New bus address: 0x%02X\n", smbus_new_addr);
+					 break;
+
+				 case 4: /* readdr */
+					 printf("Set new bus address\n");
+					 action = readdr;
+					 break;
+				 }
+				break;
+
+			default:
+				printf("Unknown argument \'%c\'\n", opt_res);
+				break;
+		}
+		opt_res = getopt_long(argc, (char * const*)argv, opt_string, long_opt, &long_opt_ind);
+	}
+
+	int32_t i2c_bus_fd = open(dev_file, O_RDWR);
+	if (i2c_bus_fd < 0) {
+		perror("Function open() returned with error");
+		return -2;
+	}
+
+	uint16_t mfr_vr_config5_c6 = 0;
+	struct mps mps;
+	mps.mps_reg_map = mps_reg_map;
+	switch((int32_t)action) {
+	case detect:
+		for (; smbus_addr <= 0x7F; smbus_addr++) {
+
+			if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_addr) < 0) {
+				perror("Function ioctl() returned with error");
+				close(i2c_bus_fd);
+				return -3;
+			}
+
+			if (mps_detect(i2c_bus_fd) == 0) {
+				printf("Detected 0x%02X\n", smbus_addr);
+			}
+		}
+		break;
+
+	case load:
+		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_addr) < 0) {
+			perror("Function ioctl() returned with error");
+			close(i2c_bus_fd);
+			return -3;
+		}
+		mps_register_map_load(conf_file, &mps);
+
+		if (smbus_addr != (mps.mps_reg_map.page2[25].data >> 8)) {
+			printf("File contains registers for device with different address\n");
+			close(i2c_bus_fd);
+			return -6;
+		}
+
+		mps_register_map_write(i2c_bus_fd, &mps.mps_reg_map);
+		break;
+
+	case store:
+		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_addr) < 0) {
+			perror("Function ioctl() returned with error");
+			close(i2c_bus_fd);
+			return -3;
+		}
+		mps_register_map_read(i2c_bus_fd, &mps.mps_reg_map);
+		mps_register_map_store(conf_file, &mps);
+		break;
+
+	case print:
+
+		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_new_addr) < 0) {
+			perror("Function ioctl() returned with error");
+			close(i2c_bus_fd);
+			return -3;
+		}
+		mps_register_map_read(i2c_bus_fd, &mps.mps_reg_map);
+		mps_register_map_print(&mps.mps_reg_map);
+		break;
+
+	case readdr:
+		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_new_addr) < 0) {
+			perror("Function ioctl() returned with error");
+			close(i2c_bus_fd);
+			return -3;
+		}
+		mps_register_map_read(i2c_bus_fd, &mps.mps_reg_map);
+
+		if ((mps_register_word_read(i2c_bus_fd, 0x2, 0x1A) >> 8) == smbus_new_addr) {
+			printf("There already exists device with address 0x%02X\n", smbus_new_addr);
+			return -6;
+		}
+
+		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_addr) < 0) {
+			perror("Function ioctl() returned with error");
+			close(i2c_bus_fd);
+			return -3;
+		}
+
+		mfr_vr_config5_c6 = mps_register_word_read(i2c_bus_fd, 0x1, 0xC6);
+		printf("mfr_vr_config_c6 0x%02X\n", mfr_vr_config5_c6);
+		mps_register_word_write(i2c_bus_fd, 0x1, 0xC6, mfr_vr_config5_c6 & (~0x0800));
+		printf("mfr_vr_config_c6 0x%02X\n", mfr_vr_config5_c6 & (~0x0800));
+		mps_register_word_write(i2c_bus_fd, 0x2, 0x1A, smbus_new_addr << 8);
+
+		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_new_addr) < 0) {
+			perror("Function ioctl() returned with error");
+			close(i2c_bus_fd);
+			return -3;
+		}
+
+		i2c_smbus_write_byte(i2c_bus_fd, 0xF1);
+		break;
+	}
+
+	close(i2c_bus_fd);
+	return 0;
+}
+
+
+#if 0
+int32_t _main(int32_t argc, const char *argv[])
+{
 	if (argc < 3) {
 		printf("Invalid arguments count\n");
 		return -1;
@@ -834,3 +1041,4 @@ int32_t main(int32_t argc, const char *argv[])
 	close(i2c_bus_fd);
 	return 0;
 }
+#endif
