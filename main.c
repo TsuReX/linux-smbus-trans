@@ -612,10 +612,17 @@ void mps_register_map_write(int device_fd, const struct mps_register_map *mps_re
 			(mps_reg_map->page1[reg_num].data == 0xFFFF)) {
 			break;
 		}
+
+		if (mps_reg_map->page1[reg_num].addr == 0xC6) { /* MFR_VR_CONFIG5 */
+			i2c_smbus_write_word_data(device_fd, mps_reg_map->page1[reg_num].addr,
+										mps_reg_map->page1[reg_num].data & (~0x0800));
+			continue;
+		}
+
 		if (mps_reg_map->page1[reg_num].length == 1) {
 
 			i2c_smbus_write_byte_data(device_fd, mps_reg_map->page1[reg_num].addr,
-										mps_reg_map->page0[reg_num].data);
+										mps_reg_map->page1[reg_num].data);
 
 		} else if (mps_reg_map->page1[reg_num].length == 2) {
 			i2c_smbus_write_word_data(device_fd, mps_reg_map->page1[reg_num].addr,
@@ -645,7 +652,17 @@ void mps_register_map_write(int device_fd, const struct mps_register_map *mps_re
 			continue;
 		}
 	}
+	mps_page_select(device_fd, 0x00);
+	i2c_smbus_write_byte(device_fd, 0xF1);
 
+	sleep(1);
+
+	mps_page_select(device_fd, 0x01);
+	i2c_smbus_write_byte(device_fd, 0xF1);
+
+	sleep(1);
+
+	mps_page_select(device_fd, 0x02);
 	i2c_smbus_write_byte(device_fd, 0xF1);
 }
 
@@ -700,7 +717,7 @@ void mps_register_word_write(int device_fd, uint32_t page_num, uint32_t reg_addr
 {
 	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
 	i2c_smbus_write_word_data(device_fd, reg_addr, reg_value);
-	i2c_smbus_write_byte(device_fd, 0xF1);
+//	i2c_smbus_write_byte(device_fd, 0xF1);
 }
 
 int32_t mps_register_word_read(int device_fd, uint32_t page_num, uint32_t reg_addr)
@@ -713,17 +730,7 @@ void mps_register_byte_write(int device_fd, uint32_t page_num, uint32_t reg_addr
 {
 	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
 	i2c_smbus_write_byte_data(device_fd, reg_addr, reg_value);
-	i2c_smbus_write_byte(device_fd, 0xF1);
-}
-
-void mps_writing_test(int device_fd)
-{
-	printf("Writing P0:E5 register\n");
-	printf("Writing P1:E5 register\n");
-	printf("Writing P2:1E register\n");
-	mps_register_word_write(device_fd, 0, 0xE5, 0x0028);
-	mps_register_word_write(device_fd, 1, 0xE5, 0x0029);
-	mps_register_word_write(device_fd, 2, 0x1E, 0x0006);
+//	i2c_smbus_write_byte(device_fd, 0xF1);
 }
 
 int32_t mps_detect(int device_fd)
@@ -868,6 +875,10 @@ int32_t main(int32_t argc, const char *argv[])
 			close(i2c_bus_fd);
 			return -3;
 		}
+
+		mfr_vr_config5_c6 = mps_register_word_read(i2c_bus_fd, 0x1, 0xC6);
+		mps_register_word_write(i2c_bus_fd, 0x1, 0xC6, mfr_vr_config5_c6 & (~0x0800));
+
 		mps_register_map_load(conf_file, &mps);
 
 		if (smbus_addr != (mps.mps_reg_map.page2[25].data >> 8)) {
@@ -891,7 +902,7 @@ int32_t main(int32_t argc, const char *argv[])
 
 	case print:
 
-		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_new_addr) < 0) {
+		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_addr) < 0) {
 			perror("Function ioctl() returned with error");
 			close(i2c_bus_fd);
 			return -3;
@@ -901,6 +912,20 @@ int32_t main(int32_t argc, const char *argv[])
 		break;
 
 	case readdr:
+
+		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_addr) < 0) {
+			perror("Function ioctl() returned with error");
+			close(i2c_bus_fd);
+			return -3;
+		}
+
+		if ((mps_register_word_read(i2c_bus_fd, 0x2, 0x1A) >> 8) != smbus_addr) {
+				printf("There isn't device with address 0x%02X\n", smbus_addr);
+				return -6;
+		}
+
+		/* Check target address. */
+
 		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_new_addr) < 0) {
 			perror("Function ioctl() returned with error");
 			close(i2c_bus_fd);
@@ -913,17 +938,49 @@ int32_t main(int32_t argc, const char *argv[])
 			return -6;
 		}
 
+		/* Save current P2 configuration into all configurations. */
+
 		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_addr) < 0) {
 			perror("Function ioctl() returned with error");
 			close(i2c_bus_fd);
 			return -3;
 		}
 
+//		mps_page_select(i2c_bus_fd, 0x00);
+//		i2c_smbus_write_byte(i2c_bus_fd, 0xF1);
+//
+//		sleep(1);
+//
+//		mps_page_select(i2c_bus_fd, 0x01);
+//		i2c_smbus_write_byte(i2c_bus_fd, 0xF1);
+//
+//		sleep(1);
+
+		mps_page_select(i2c_bus_fd, 0x02);
+		i2c_smbus_write_byte(i2c_bus_fd, 0xF1);
+
+		sleep(1);
+
+		/* Disable CONFIG_PL bit */
+
 		mfr_vr_config5_c6 = mps_register_word_read(i2c_bus_fd, 0x1, 0xC6);
 		printf("mfr_vr_config_c6 0x%02X\n", mfr_vr_config5_c6);
+
 		mps_register_word_write(i2c_bus_fd, 0x1, 0xC6, mfr_vr_config5_c6 & (~0x0800));
 		printf("mfr_vr_config_c6 0x%02X\n", mfr_vr_config5_c6 & (~0x0800));
+
+		sleep(1);
+
+		mfr_vr_config5_c6 = mps_register_word_read(i2c_bus_fd, 0x1, 0xC6);
+		printf("mfr_vr_config_c6 0x%02X\n", mfr_vr_config5_c6);
+
+		sleep(1);
+
+		/* Set new address */
+
 		mps_register_word_write(i2c_bus_fd, 0x2, 0x1A, smbus_new_addr << 8);
+		sleep(1);
+		/* Save new address */
 
 		if (ioctl(i2c_bus_fd, I2C_SLAVE, smbus_new_addr) < 0) {
 			perror("Function ioctl() returned with error");
@@ -931,6 +988,7 @@ int32_t main(int32_t argc, const char *argv[])
 			return -3;
 		}
 
+		mps_page_select(i2c_bus_fd, 0x02);
 		i2c_smbus_write_byte(i2c_bus_fd, 0xF1);
 		break;
 	}
