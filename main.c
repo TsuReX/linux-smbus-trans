@@ -337,6 +337,35 @@ int32_t i2c_smbus_write_word_data(int file, uint8_t command, uint16_t value)
 	return i2c_smbus_access(file, I2C_SMBUS_WRITE, command,
 				I2C_SMBUS_WORD_DATA, &data);
 }
+void mps_register_word_write(int device_fd, uint32_t page_num, uint32_t reg_addr, uint16_t reg_value)
+{
+	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
+	i2c_smbus_write_word_data(device_fd, reg_addr, reg_value);
+}
+
+void mps_register_byte_write(int device_fd, uint32_t page_num, uint32_t reg_addr, uint8_t reg_value)
+{
+	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
+	i2c_smbus_write_byte_data(device_fd, reg_addr, reg_value);
+}
+
+int16_t mps_register_word_read(int device_fd, uint32_t page_num, uint32_t reg_addr)
+{
+	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
+	return i2c_smbus_read_word_data(device_fd, reg_addr);
+}
+
+int8_t mps_register_byte_read(int device_fd, uint32_t page_num, uint32_t reg_addr)
+{
+	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
+	return i2c_smbus_read_byte_data(device_fd, reg_addr);
+}
+
+void mps_command_write(int device_fd, uint32_t page_num, uint8_t command)
+{
+	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
+	i2c_smbus_write_byte(device_fd, command);
+}
 
 void mps_memory_write(int device_fd)
 {
@@ -575,12 +604,72 @@ int32_t mps_register_map_store(const char *dst_file, const struct mps *mps)
 	return 0;
 }
 
+#define PAGE0						0x00
+#define PAGE1						0x01
+#define PAGE2						0x01
+
+#define STATUS_CML_REG_ADDR			0x7E
+#define SATUS_CML_PWD_MATCH			0x08
+
+#define MTP_WRITE_PROTECT_ADDR		0x10
+#define MTP_WRITE_PROTECT_DIS_PROT	0x63
+#define MTP_WRITE_PROTECT_EN_PROT	0x63
+#define PWD_CHECK_CMD_ADDR			0xF8
+#define PASSWORD					0xFF
+
+#define CLEAR_FAULTS_CMD			0x03
+
+#define STORE_NORMAL_CODE_CMD		0xF1
+#define RESTORE_NORMAL_CODE_CMD		0xF2
+#define STORE_USER_CODE_CMD			0x17
+#define RESTORE_USER_CODE_CMD		0x18
+
+#define MFR_CRC_NORMAL_CODE_ADDR	0xAB
+#define MFR_CRC_MULTI_CONFIG_ADDR	0xAD
+
 void mps_register_map_write(int device_fd, const struct mps_register_map *mps_reg_map)
 {
+	/* Unlock password */
+	uint8_t status_cml = 0xFF;
+	status_cml = mps_register_byte_read(device_fd, PAGE0, STATUS_CML_REG_ADDR);
+	printf("STATUS_CML 0x%02X\n", status_cml);
+
+	/* Clear latched status */
+	mps_command_write(device_fd, PAGE0, CLEAR_FAULTS_CMD);
+	usleep(100000);
+
+#if 0
+	if ((status_cml & SATUS_CML_PWD_MATCH) == 0) {
+		printf("Password unlock\n");
+		mps_register_word_write(device_fd, PAGE0, PWD_CHECK_CMD_ADDR, PASSWORD);
+		usleep(100000);
+	}
+
+	status_cml = mps_register_byte_read(device_fd, PAGE0, STATUS_CML_REG_ADDR);
+
+	if ((status_cml & SATUS_CML_PWD_MATCH) == 0) {
+		printf("Password can't be unlocked\n");
+		return;
+	}
+#else
+	status_cml = mps_register_byte_read(device_fd, PAGE0, STATUS_CML_REG_ADDR);
+#endif
+	printf("STATUS_CML 0x%02X\n", status_cml);
+
+	/* Unlock MTP protection */
+//	mps_register_byte_write(device_fd, PAGE0, MTP_WRITE_PROTECT_ADDR, MTP_WRITE_PROTECT_DIS_PROT);
+
+	uint16_t mfr_crc_normal_code = mps_register_word_read(device_fd, PAGE1, MFR_CRC_NORMAL_CODE_ADDR);
+	printf("MFR_CRC_NORMAL_CODE 0x%04X\n", mfr_crc_normal_code);
+
+	uint16_t mfr_crc_multi_config = mps_register_word_read(device_fd, PAGE1, MFR_CRC_MULTI_CONFIG_ADDR);
+	printf("MFR_CRC_MULTI_CONFIG_ADDR 0x%04X\n", mfr_crc_multi_config);
+
+	printf("Page 0 writing\n");
+
+	mps_page_select(device_fd, PAGE0);
+
 	size_t reg_num;
-
-	mps_page_select(device_fd, 0x00);
-
 	for (reg_num = 0; ; ++reg_num) {
 		if ((mps_reg_map->page0[reg_num].addr == 0xFF) &&
 			(mps_reg_map->page0[reg_num].length == 0xFF) &&
@@ -603,8 +692,10 @@ void mps_register_map_write(int device_fd, const struct mps_register_map *mps_re
 			continue;
 		}
 	}
+	printf("Page 0 writing finished\n");
 
-	mps_page_select(device_fd, 0x01);
+	printf("Page 1 writing\n");
+	mps_page_select(device_fd, PAGE1);
 
 	for (reg_num = 0; ; ++reg_num) {
 		if ((mps_reg_map->page1[reg_num].addr == 0xFF) &&
@@ -612,13 +703,13 @@ void mps_register_map_write(int device_fd, const struct mps_register_map *mps_re
 			(mps_reg_map->page1[reg_num].data == 0xFFFF)) {
 			break;
 		}
-
+#if 0
 		if (mps_reg_map->page1[reg_num].addr == 0xC6) { /* MFR_VR_CONFIG5 */
 			i2c_smbus_write_word_data(device_fd, mps_reg_map->page1[reg_num].addr,
 										mps_reg_map->page1[reg_num].data & (~0x0800));
 			continue;
 		}
-
+#endif
 		if (mps_reg_map->page1[reg_num].length == 1) {
 
 			i2c_smbus_write_byte_data(device_fd, mps_reg_map->page1[reg_num].addr,
@@ -631,7 +722,22 @@ void mps_register_map_write(int device_fd, const struct mps_register_map *mps_re
 			continue;
 		}
 	}
+	printf("Page 1 writing finished\n");
+#if 0
+	printf("Storing data into MTP\n");
+	mps_command_write(device_fd, PAGE0, STORE_NORMAL_CODE_CMD);
+	usleep(500000);
+	printf("Storing data into MTP finished\n");
 
+	mfr_crc_normal_code = mps_register_word_read(device_fd, PAGE1, MFR_CRC_NORMAL_CODE_ADDR);
+	printf("MFR_CRC_NORMAL_CODE 0x%04X\n", mfr_crc_normal_code);
+
+	/* Restore data from MTP */
+	mps_command_write(device_fd, PAGE0, RESTORE_NORMAL_CODE_CMD);
+	usleep(50000);
+#endif
+
+	printf("Page 2 writing\n");
 	mps_page_select(device_fd, 0x02);
 
 	for (reg_num = 0; ; ++reg_num) {
@@ -652,18 +758,26 @@ void mps_register_map_write(int device_fd, const struct mps_register_map *mps_re
 			continue;
 		}
 	}
-	mps_page_select(device_fd, 0x00);
-	i2c_smbus_write_byte(device_fd, 0xF1);
+	printf("Page 2 writing finished\n");
 
+	mps_command_write(device_fd, PAGE1, STORE_USER_CODE_CMD);
 	sleep(1);
 
-	mps_page_select(device_fd, 0x01);
-	i2c_smbus_write_byte(device_fd, 0xF1);
+	mfr_crc_normal_code = mps_register_word_read(device_fd, PAGE1, MFR_CRC_NORMAL_CODE_ADDR);
+	printf("MFR_CRC_NORMAL_CODE 0x%04X\n", mfr_crc_normal_code);
 
-	sleep(1);
+	mfr_crc_multi_config = mps_register_word_read(device_fd, PAGE1, MFR_CRC_MULTI_CONFIG_ADDR);
+	printf("MFR_CRC_MULTI_CONFIG_ADDR 0x%04X\n", mfr_crc_multi_config);
 
-	mps_page_select(device_fd, 0x02);
-	i2c_smbus_write_byte(device_fd, 0xF1);
+	/* Restore data from MTP */
+	mps_command_write(device_fd, PAGE0, RESTORE_USER_CODE_CMD);
+	usleep(50000);
+
+	mfr_crc_normal_code = mps_register_word_read(device_fd, PAGE1, MFR_CRC_NORMAL_CODE_ADDR);
+	printf("MFR_CRC_NORMAL_CODE 0x%04X\n", mfr_crc_normal_code);
+
+	mfr_crc_multi_config = mps_register_word_read(device_fd, PAGE1, MFR_CRC_MULTI_CONFIG_ADDR);
+	printf("MFR_CRC_MULTI_CONFIG_ADDR 0x%04X\n", mfr_crc_multi_config);
 }
 
 void mps_register_map_print(const struct mps_register_map *mps_reg_map)
@@ -713,32 +827,13 @@ void mps_register_map_print(const struct mps_register_map *mps_reg_map)
 	}
 }
 
-void mps_register_word_write(int device_fd, uint32_t page_num, uint32_t reg_addr, uint16_t reg_value)
-{
-	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
-	i2c_smbus_write_word_data(device_fd, reg_addr, reg_value);
-//	i2c_smbus_write_byte(device_fd, 0xF1);
-}
-
-int32_t mps_register_word_read(int device_fd, uint32_t page_num, uint32_t reg_addr)
-{
-	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
-	return i2c_smbus_read_word_data(device_fd, reg_addr);
-}
-
-void mps_register_byte_write(int device_fd, uint32_t page_num, uint32_t reg_addr, uint8_t reg_value)
-{
-	i2c_smbus_write_byte_data(device_fd, 0x00, page_num);
-	i2c_smbus_write_byte_data(device_fd, reg_addr, reg_value);
-//	i2c_smbus_write_byte(device_fd, 0xF1);
-}
-
 int32_t mps_detect(int device_fd)
 {
+	mps_page_select(device_fd, PAGE0);
 	int32_t ret_val = mps_register_word_read(device_fd, 0x00, 0x9D);
 	if (ret_val < 0)
 		return -1;
-	printf("Data 0x%02X\n", ret_val);
+	printf("Data 0x%04X\n", ret_val);
 	return 0;
 }
 
@@ -876,9 +971,9 @@ int32_t main(int32_t argc, const char *argv[])
 			return -3;
 		}
 
-		mfr_vr_config5_c6 = mps_register_word_read(i2c_bus_fd, 0x1, 0xC6);
-		mps_register_word_write(i2c_bus_fd, 0x1, 0xC6, mfr_vr_config5_c6 & (~0x0800));
-
+//		mfr_vr_config5_c6 = mps_register_word_read(i2c_bus_fd, 0x1, 0xC6);
+//		mps_register_word_write(i2c_bus_fd, 0x1, 0xC6, mfr_vr_config5_c6 & (~0x0800));
+//
 		mps_register_map_load(conf_file, &mps);
 
 		if (smbus_addr != (mps.mps_reg_map.page2[25].data >> 8)) {
@@ -956,8 +1051,8 @@ int32_t main(int32_t argc, const char *argv[])
 //
 //		sleep(1);
 
-		mps_page_select(i2c_bus_fd, 0x02);
-		i2c_smbus_write_byte(i2c_bus_fd, 0xF1);
+		mps_page_select(i2c_bus_fd, PAGE2);
+		i2c_smbus_write_byte(i2c_bus_fd, 0x17);
 
 		sleep(1);
 
@@ -988,8 +1083,8 @@ int32_t main(int32_t argc, const char *argv[])
 			return -3;
 		}
 
-		mps_page_select(i2c_bus_fd, 0x02);
-		i2c_smbus_write_byte(i2c_bus_fd, 0xF1);
+		mps_page_select(i2c_bus_fd, PAGE2);
+		i2c_smbus_write_byte(i2c_bus_fd, 0x17);
 		break;
 	}
 
